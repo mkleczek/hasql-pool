@@ -15,7 +15,7 @@ import Test.Hspec
 import Prelude
 
 runnable :: Session.Session a -> R.Session a
-runnable = R.Session . Session.runSession
+runnable = R.Session . Session.run
 
 use pool session = P.use pool $ runnable session
 
