@@ -53,11 +53,11 @@
     },
     "haskell-flake": {
       "locked": {
-        "lastModified": 1680209587,
-        "narHash": "sha256-pkoi6erX5sSrSOIqkbiWP3x5BdvMZuQ9BsrXJB4HxW8=",
+        "lastModified": 1680719649,
+        "narHash": "sha256-HgBPgdrNwRTK94YngTREi75iLI5l3kWlxwTRIGHIcuo=",
         "owner": "srid",
         "repo": "haskell-flake",
-        "rev": "2fde5d0cab1dd517b71c232053a15dc7cc09017c",
+        "rev": "bae56fa9844e541b8359a272dae7a7c12911612f",
         "type": "github"
       },
       "original": {
@@ -91,11 +91,11 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1680706404,
-        "narHash": "sha256-yEYdqTZzh5FIa8vlYa74IgSMwQ5ZO+Ti04E+mxxkZE8=",
+        "lastModified": 1680724177,
+        "narHash": "sha256-AGYZqDF7NPWKRDfPXjA7jBfiGJviDO0yXeCtdHCwuo8=",
         "owner": "mkleczek",
         "repo": "hasql-api",
-        "rev": "3037246f208c7562e696a4dce933cbf000ba6ad6",
+        "rev": "ce9e9cf6a2c57c3f35f0d026dd1f16923f3e0fd0",
         "type": "github"
       },
       "original": {
