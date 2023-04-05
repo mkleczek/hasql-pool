@@ -37,7 +37,7 @@ library
     hasql-api,
   mixins:
     hasql hiding (Hasql.Session),
-    hasql-api (Hasql.Api.Eff.Session as Hasql.Session)
+    hasql-api (Hasql.Api.Eff.Session.Run as Hasql.Session)
 
 test-suite test
   import: base-settings
@@ -55,4 +55,4 @@ test-suite test
     hasql-api,
   mixins:
     hasql hiding (Hasql.Session),
-    hasql-api (Hasql.Api.Eff.Session as Hasql.Session)
+    hasql-api (Hasql.Api.Eff.Session.Run, Hasql.Api.Eff.Session as Hasql.Session)
