@@ -91,11 +91,11 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1680724177,
-        "narHash": "sha256-AGYZqDF7NPWKRDfPXjA7jBfiGJviDO0yXeCtdHCwuo8=",
+        "lastModified": 1680732659,
+        "narHash": "sha256-BOdn3Eoi4Sr4PkgbRnnGQxEEcNNYGbvEXXVXY/bGUBA=",
         "owner": "mkleczek",
         "repo": "hasql-api",
-        "rev": "ce9e9cf6a2c57c3f35f0d026dd1f16923f3e0fd0",
+        "rev": "ff79882a8a67b85316bc8085afeaa119e228ba86",
         "type": "github"
       },
       "original": {
