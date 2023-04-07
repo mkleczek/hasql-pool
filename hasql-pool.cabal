@@ -57,4 +57,4 @@ test-suite test
     hasql-api,
   mixins:
     hasql hiding (Hasql.Session),
-    hasql-api (Hasql.Api.Eff.Session.Run, Hasql.Api.Eff.Session as Hasql.Session)
+    hasql-api (Hasql.Api.Eff.Session.Run, Hasql.Api.Eff.Session.Legacy as Hasql.Session)
