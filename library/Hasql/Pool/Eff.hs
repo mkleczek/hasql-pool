@@ -34,5 +34,5 @@ dynamicPool poolSize timeout settings = interpret $ \env -> \case
     Release pool -> localSeqUnliftIO env $ const $ P.release pool
 
 {-# INLINE runWithPoolEither #-}
-runWithPoolEither :: forall es les a. (IOE :> es, Subset les es) => Pool -> Eff (WithConnection (Eff (Error QueryError : les)) : Error UsageError : es) a -> Eff es (Either UsageError a)
-runWithPoolEither pool = runErrorNoCallStack . runPoolHandler pool (raise . inject)
+runWithPoolEither :: forall es les a. (IOE :> es, Subset les (Error UsageError : es)) => Pool -> Eff (WithConnection (Eff (Error QueryError : les)) : Error UsageError : es) a -> Eff es (Either UsageError a)
+runWithPoolEither pool = runErrorNoCallStack . runPoolHandler pool inject
