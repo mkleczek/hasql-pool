@@ -39,7 +39,7 @@ library
     effectful-core
   mixins:
     hasql hiding (Hasql.Session),
-    hasql-api (Hasql.Api.Eff.WithResource, Hasql.Api.Eff.Session.Run as Hasql.Session)
+    hasql-api (Hasql.Api.Eff.Throws, Hasql.Api.Eff.WithResource, Hasql.Api.Eff.Session.Run as Hasql.Session)
 
 test-suite test
   import: base-settings
