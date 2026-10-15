@@ -91,7 +91,6 @@ spec = do
 
   it "Gives a freed connection to a pool request waiting for it rather than to a later one" \scopeParams ->
     Scripts.onAutotaggedPool 1 10 1_800 1_800 scopeParams \_ pool -> do
-      pendingWith "A later pool request takes a freed connection before the waiting one runs"
       order <- newIORef []
       held <- newEmptyMVar
       done <- newEmptyMVar
