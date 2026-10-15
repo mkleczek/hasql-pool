@@ -40,12 +40,20 @@ entryIsIdle maxIdletime now Entry {..} =
 
 -- | A pool request waiting for a connection.
 data Waiter = Waiter
-  { -- | What the pool request gets, with the reuse flag at the time: an idle
-    -- connection, or the slot of a closed one to establish a connection in.
-    waiterGiven :: TMVar (TVar Bool, Maybe Entry),
+  { -- | When the pool request times out, in nanoseconds of the monotonic clock.
+    waiterDeadline :: Word64,
+    -- | What the pool request gets.
+    waiterGiven :: TMVar Given,
     -- | Whether the pool request stopped waiting, so that it gets passed over.
     waiterGone :: TVar Bool
   }
+
+-- | What a waiting pool request gets: an idle connection, or the slot of a
+-- closed one to establish a connection in, with the reuse flag at the time,
+-- or a timeout.
+data Given
+  = Given (TVar Bool) (Maybe Entry)
+  | TimedOut
 
 -- | Pool of connections to DB.
 data Pool = Pool
@@ -55,8 +63,8 @@ data Pool = Pool
     poolAdapter :: Pqi.Adapter,
     -- | Connection settings.
     poolFetchConnectionSettings :: IO Connection.Settings.Settings,
-    -- | Acquisition timeout, in microseconds.
-    poolAcquisitionTimeout :: Int,
+    -- | Acquisition timeout, in nanoseconds.
+    poolAcquisitionTimeout :: Word64,
     -- | Maximal connection lifetime, in nanoseconds.
     poolMaxLifetime :: Word64,
     -- | Maximal connection idle time, in nanoseconds.
@@ -74,7 +82,7 @@ data Pool = Pool
     poolWaiting :: TQueue Waiter,
     -- | Whether to return a connection to the pool.
     poolReuseVar :: TVar (TVar Bool),
-    -- | To stop the manager thread via garbage collection.
+    -- | To stop the manager and expirer threads via garbage collection.
     poolReaperRef :: IORef (),
     -- | Action for reporting the observations.
     poolObserver :: Observation -> IO (),
@@ -116,14 +124,17 @@ acquire adapter config = do
           atomically $ freeSlot reuseVar waiting capVar
           (Config.observationHandler config) (ConnectionObservation (entryId entry) (TerminatedConnectionStatus IdlenessConnectionTerminationReason))
 
-  void . mkWeakIORef reaperRef $ do
-    -- When the pool goes out of scope, stop the manager.
-    killThread managerTid
+  expirerTid <- forkIOWithUnmask $ \unmask -> unmask $ expire waiting
 
-  return $ Pool (Config.size config) adapter (Config.connectionSettingsProvider config) acqTimeoutMicros agingTimeoutNanos maxIdletimeNanos connectionQueue capVar waiting reuseVar reaperRef (Config.observationHandler config) (Config.initSession config)
+  void . mkWeakIORef reaperRef $ do
+    -- When the pool goes out of scope, stop the manager and the expirer.
+    killThread managerTid
+    killThread expirerTid
+
+  return $ Pool (Config.size config) adapter (Config.connectionSettingsProvider config) acqTimeoutNanos agingTimeoutNanos maxIdletimeNanos connectionQueue capVar waiting reuseVar reaperRef (Config.observationHandler config) (Config.initSession config)
   where
-    acqTimeoutMicros =
-      div (fromIntegral (diffTimeToPicoseconds (Config.acquisitionTimeout config))) 1_000_000
+    acqTimeoutNanos =
+      div (fromIntegral (diffTimeToPicoseconds (Config.acquisitionTimeout config))) 1_000
     agingTimeoutNanos =
       div (fromIntegral (diffTimeToPicoseconds (Config.agingTimeout config))) 1_000
     maxIdletimeNanos =
@@ -163,7 +174,12 @@ release Pool {..} =
 -- order they came, and a later pool request doesn't take a connection while
 -- others wait.
 use :: Pool -> Session.Session a -> IO (Either UsageError a)
-use Pool {..} sess =
+use Pool {..} sess = do
+  now <- getMonotonicTimeNSec
+  let enqueue = do
+        waiter <- Waiter (now + poolAcquisitionTimeout) <$> newEmptyTMVar <*> newTVar False
+        writeTQueue poolWaiting waiter
+        return waiter
   join . atomically $ do
     reuseVar <- readTVar poolReuseVar
     waited <- someoneWaiting poolWaiting
@@ -183,28 +199,12 @@ use Pool {..} sess =
             enqueue <&> onWaiter
           ]
   where
-    enqueue = do
-      waiter <- Waiter <$> newEmptyTMVar <*> newTVar False
-      writeTQueue poolWaiting waiter
-      return waiter
-
-    -- Only a pool request that waits registers a timer: GHC can't cancel one,
-    -- so each stays until it fires.
     onWaiter waiter = do
-      timedOut <- registerDelay poolAcquisitionTimeout
-      given <-
-        atomically
-          ( (Just <$> takeTMVar (waiterGiven waiter))
-              <|> do
-                readTVar timedOut >>= check
-                writeTVar (waiterGone waiter) True
-                return Nothing
-          )
-          `onException` abandon waiter
+      given <- atomically (takeTMVar (waiterGiven waiter)) `onException` abandon waiter
       case given of
-        Nothing -> return $ Left AcquisitionTimeoutUsageError
-        Just (reuseVar, Nothing) -> onNewConn reuseVar
-        Just (reuseVar, Just entry) -> onConn reuseVar entry
+        TimedOut -> return $ Left AcquisitionTimeoutUsageError
+        Given reuseVar Nothing -> onNewConn reuseVar
+        Given reuseVar (Just entry) -> onConn reuseVar entry
 
     -- A pool request interrupted while waiting gives back what it was given
     -- meanwhile.
@@ -213,8 +213,9 @@ use Pool {..} sess =
         writeTVar (waiterGone waiter) True
         tryTakeTMVar (waiterGiven waiter)
       forM_ given \case
-        (_, Nothing) -> atomically returnSlot
-        (reuseVar, Just entry) -> returnConn reuseVar entry
+        Given _ Nothing -> atomically returnSlot
+        Given reuseVar (Just entry) -> returnConn reuseVar entry
+        TimedOut -> return ()
 
     returnSlot = freeSlot poolReuseVar poolWaiting poolCapacity
 
@@ -303,7 +304,7 @@ use Pool {..} sess =
             nextWaiter poolWaiting >>= \case
               Just waiter -> do
                 currentReuseVar <- readTVar poolReuseVar
-                putTMVar (waiterGiven waiter) (currentReuseVar, Just entry)
+                putTMVar (waiterGiven waiter) (Given currentReuseVar (Just entry))
               Nothing -> writeTQueue poolConnectionQueue entry
             return $ return ()
           else return $ do
@@ -340,8 +341,31 @@ freeSlot reuseVarVar waiting capVar =
   nextWaiter waiting >>= \case
     Just waiter -> do
       reuseVar <- readTVar reuseVarVar
-      putTMVar (waiterGiven waiter) (reuseVar, Nothing)
+      putTMVar (waiterGiven waiter) (Given reuseVar Nothing)
     Nothing -> modifyTVar' capVar succ
+
+-- | Time out the pool requests waiting too long. All wait as long, so the pool
+-- request waiting longest times out first: one thread sleeps until its
+-- deadline, rather than every waiting pool request registering a timer, which
+-- GHC can't cancel.
+expire :: TQueue Waiter -> IO ()
+expire waiting = forever $ do
+  deadline <- atomically $ do
+    waited <- someoneWaiting waiting
+    if waited then waiterDeadline <$> peekTQueue waiting else retry
+  now <- getMonotonicTimeNSec
+  -- In microseconds, at most an hour at a time.
+  when (deadline > now) $ threadDelay (fromIntegral (min 3_600_000_000 (div (deadline - now) 1_000 + 1)))
+  atomically . timeOut =<< getMonotonicTimeNSec
+  where
+    timeOut now =
+      tryPeekTQueue waiting >>= \case
+        Just waiter | waiterDeadline waiter <= now -> do
+          _ <- readTQueue waiting
+          gone <- readTVar (waiterGone waiter)
+          unless gone $ putTMVar (waiterGiven waiter) TimedOut
+          timeOut now
+        _ -> return ()
 
 -- | Union over all errors that 'use' can result in.
 data UsageError
