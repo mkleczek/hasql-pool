@@ -16,6 +16,7 @@ import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Connection.Settings
 import Hasql.Errors qualified as Errors
 import Hasql.Pool.Config.Config qualified as Config
+import Hasql.Pool.Config.ReuseOrder (ReuseOrder (..))
 import Hasql.Pool.Observation
 import Hasql.Pool.Prelude
 import Hasql.Pool.SessionErrorDestructors qualified as ErrorsDestruction
@@ -52,8 +53,10 @@ data Pool = Pool
     poolMaxLifetime :: Word64,
     -- | Maximal connection idle time, in nanoseconds.
     poolMaxIdletime :: Word64,
-    -- | Avail connections.
+    -- | Avail connections, in the order they get reused.
     poolConnectionQueue :: TQueue Entry,
+    -- | Which end of the queue returned connections go to.
+    poolReuseOrder :: ReuseOrder,
     -- | Remaining capacity.
     -- The pool size limits the sum of poolCapacity, the length
     -- of poolConnectionQueue and the number of in-flight
@@ -106,7 +109,7 @@ acquire adapter config = do
     -- When the pool goes out of scope, stop the manager.
     killThread managerTid
 
-  return $ Pool (Config.size config) adapter (Config.connectionSettingsProvider config) acqTimeoutMicros agingTimeoutNanos maxIdletimeNanos connectionQueue capVar reuseVar reaperRef (Config.observationHandler config) (Config.initSession config)
+  return $ Pool (Config.size config) adapter (Config.connectionSettingsProvider config) acqTimeoutMicros agingTimeoutNanos maxIdletimeNanos connectionQueue (Config.reuseOrder config) capVar reuseVar reaperRef (Config.observationHandler config) (Config.initSession config)
   where
     acqTimeoutMicros =
       div (fromIntegral (diffTimeToPicoseconds (Config.acquisitionTimeout config))) 1_000_000
@@ -246,7 +249,11 @@ use Pool {..} sess = do
           join . atomically $ do
             reuse <- readTVar reuseVar
             if reuse
-              then writeTQueue poolConnectionQueue entry $> return ()
+              then do
+                case poolReuseOrder of
+                  LIFO -> unGetTQueue poolConnectionQueue entry
+                  FIFO -> writeTQueue poolConnectionQueue entry
+                return $ return ()
               else return $ do
                 Connection.release (entryConnection entry)
                 atomically $ modifyTVar' poolCapacity succ
